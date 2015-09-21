@@ -42,7 +42,7 @@ Usage:
 Options:
     -h --help     Show this help.
     -m <build>    Build command.
-                  [default: makepkg -sr]
+                  [default: makepkg -sr --noconfirm]
     -i <install>  Install command.
                   [default: /usr/lib/saturated/install-package]
     -w <workdir>  Workdir to use for cloning and building packages.
@@ -80,7 +80,7 @@ func main() {
 
 	log.Printf("listening on '%s'...", listenAddress)
 
-	handler.ListenAndServe(listenAddress)
+	err = handler.ListenAndServe(listenAddress)
 	if err != nil {
 		log.Fatalf("can't listen on '%s': %s", listenAddress, err)
 	}
