@@ -22,11 +22,6 @@ type BuildHandler struct {
 	queue          *BuildQueue
 }
 
-type WriteFlusher interface {
-	io.Writer
-	Flush() error
-}
-
 type RepoExistError struct {
 	error
 }
@@ -83,18 +78,31 @@ func main() {
 		queue:          NewBuildQueue(),
 	}
 
-	http.Handle("/v1/build/", handler)
-
 	log.Printf("listening on '%s'...", listenAddress)
-	err = http.ListenAndServe(listenAddress, nil)
+
+	handler.ListenAndServe(listenAddress)
 	if err != nil {
 		log.Fatalf("can't listen on '%s': %s", listenAddress, err)
 	}
 }
 
+func (handler *BuildHandler) ListenAndServe(address string) error {
+	server := &http.Server{
+		Addr:    address,
+		Handler: handler,
+	}
+
+	return server.ListenAndServe()
+}
+
 func (handler *BuildHandler) ServeHTTP(
 	response http.ResponseWriter, request *http.Request,
 ) {
+	if !strings.HasPrefix(request.URL.Path, "/v1/build/") {
+		response.WriteHeader(http.StatusNotFound)
+		return
+	}
+
 	repoUrl := strings.TrimPrefix(request.URL.Path, "/v1/build/")
 	if repoUrl == "" {
 		response.WriteHeader(http.StatusBadRequest)
