@@ -31,3 +31,17 @@ https://aur4.archlinux.org/packages/saturated
 ```
 go get github.com/seletskiy/saturated
 ```
+
+# Typical configuration
+
+1. Install package as specified above (use prepared PKBUILD).
+2. Package will create makepkg user with sudo-privileges.
+3. Init SSH key-pair using `sudo -u makepkg ssh-keygen`.
+4. Copy public part of the SSH key to required source-code repositories (if
+   needed).
+5. Prepare and test installation script, that will be executed in the working
+   directory after successfull build.
+6. Copy installation script into /usr/lib/saturated/install-package (make sure
+   it has exectable flag).
+7. Run saturated using systemctl service: `systemctl start saturated`, it will
+   listen on the address `:8080`.
