@@ -104,7 +104,7 @@ func (task *Task) cleanWorkDir() error {
 
 func (task *Task) buildPackage(commandString, environ string) error {
 	command := makeShellCommand(commandString, task.workDir)
-	command.Env = append([]string{environ}, command.Env...)
+	command.Env = append([]string{environ}, os.Environ()...)
 	return runCommandWithLog(command, task.logger.WithPrefix("[build] "))
 }
 
