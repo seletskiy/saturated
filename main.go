@@ -10,10 +10,13 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"syscall"
+	"text/tabwriter"
+	"time"
 
 	"github.com/docopt/docopt-go"
 )
@@ -26,10 +29,37 @@ type BuildHandler struct {
 	installCommand string
 	branchName     string
 	queue          *BuildQueue
+	lastBuilds     map[string]BuildInfo
 }
 
 type RepoExistError struct {
 	error
+}
+
+type BuildInfo struct {
+	Repository string
+	startedAt  time.Time
+	finishedAt time.Time
+	Status     string
+	Error      string
+}
+
+func NewBuildInfo(repoName string) (string, BuildInfo) {
+	started := time.Now()
+	return fmt.Sprintf("%x", started.UnixNano()), BuildInfo{
+		Repository: repoName,
+		startedAt:  started,
+		Status:     "in progress",
+	}
+}
+
+func (info BuildInfo) Duration() time.Duration {
+	switch info.finishedAt {
+	case time.Time{}:
+		return time.Now().Sub(info.startedAt)
+	default:
+		return info.finishedAt.Sub(info.startedAt)
+	}
 }
 
 const usage = `saturated - dead simple makepkg build server.
@@ -100,6 +130,7 @@ func main() {
 		installCommand: installCommand,
 		branchName:     branchName,
 		queue:          NewBuildQueue(),
+		lastBuilds:     map[string]BuildInfo{},
 	}
 
 	log.Printf("listening on '%s'...", listenAddress)
@@ -130,11 +161,23 @@ func checkSetuid(uid int) (err error) {
 func (handler *BuildHandler) ServeHTTP(
 	response http.ResponseWriter, request *http.Request,
 ) {
-	if !strings.HasPrefix(request.URL.Path, "/v1/build/") {
-		response.WriteHeader(http.StatusNotFound)
-		return
+	switch {
+	case request.URL.Path == "/v1/builds":
+		handler.handleListBuilds(response, request)
+	case strings.HasPrefix(request.URL.Path, "/v1/build/"):
+		handler.handleBuild(response, request)
+	default:
+		response.WriteHeader(http.StatusBadRequest)
+		io.WriteString(
+			response,
+			"error: <repo-url> required in URL /v1/build/<repo-url>",
+		)
 	}
+}
 
+func (handler *BuildHandler) handleBuild(
+	response http.ResponseWriter, request *http.Request,
+) {
 	repoUrl := strings.TrimPrefix(request.URL.Path, "/v1/build/")
 	if repoUrl == "" {
 		response.WriteHeader(http.StatusBadRequest)
@@ -194,7 +237,7 @@ func (handler *BuildHandler) ServeHTTP(
 		return
 	}
 
-	err = runBuild(
+	err = handler.runBuild(
 		repoUrl,
 		handler.reposPath,
 		handler.branchName,
@@ -210,11 +253,50 @@ func (handler *BuildHandler) ServeHTTP(
 	}
 }
 
-func runBuild(
-	repoUrl, reposPath, branchName string,
-	buildCommand, installCommand string,
+func (handler BuildHandler) handleListBuilds(
+	response http.ResponseWriter, request *http.Request,
+) {
+	writer := tabwriter.NewWriter(response, 20, 8, 4, ' ', 0)
+	defer writer.Flush()
+	builds := make([]string, len(handler.lastBuilds))
+	index := 0
+	for build := range handler.lastBuilds {
+		builds[index] = build
+		index++
+	}
+
+	writer.Write([]byte(fmt.Sprintf(
+		"%s\t%s\t%s\t%s\n",
+		"Repo url", "Duration", "Status", "Error Message",
+	)))
+	sort.Strings(builds)
+	for _, build := range builds {
+		buildInfo := handler.lastBuilds[build]
+		writer.Write([]byte(fmt.Sprintf(
+			"%s\t%s\t%s\t%s\n",
+			buildInfo.Repository, buildInfo.Duration(),
+			buildInfo.Status, buildInfo.Error,
+		)))
+	}
+}
+
+func (handler *BuildHandler) runBuild(
+	repoUrl, reposPath, branchName, buildCommand, installCommand string,
 	logger PrefixLogger, environ []string,
-) error {
+) (err error) {
+	buildID, buildInfo := NewBuildInfo(repoUrl)
+	handler.lastBuilds[buildID] = buildInfo
+	defer func() {
+		buildInfo.finishedAt = time.Now()
+		if err != nil {
+			buildInfo.Status = "error"
+			buildInfo.Error = err.Error()
+		} else {
+			buildInfo.Status = "success"
+		}
+		handler.lastBuilds[buildID] = buildInfo
+	}()
+
 	repoDir := regexp.MustCompile(`[^\w-@.]`).ReplaceAllLiteralString(
 		repoUrl, "__",
 	)
@@ -228,7 +310,7 @@ func runBuild(
 		workDir: workDir,
 	}
 
-	err := task.updateMirror(repoUrl, repoPath)
+	err = task.updateMirror(repoUrl, repoPath)
 	if err != nil {
 		return fmt.Errorf("can't update mirror: %s", err)
 	}
