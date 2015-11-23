@@ -30,7 +30,7 @@ func (task *Task) updateMirror(repoUrl, repoPath string) error {
 }
 
 func (task *Task) run(
-	repoPath, branchName, buildCommand, installCommand string,
+	repoPath, branchName, buildCommand, installCommand string, environ string,
 ) error {
 	defer task.cleanWorkDir()
 
@@ -44,7 +44,7 @@ func (task *Task) run(
 		return err
 	}
 
-	err = task.buildPackage(buildCommand)
+	err = task.buildPackage(buildCommand, environ)
 	if err != nil {
 		return err
 	}
@@ -102,11 +102,10 @@ func (task *Task) cleanWorkDir() error {
 	return os.RemoveAll(task.workDir)
 }
 
-func (task *Task) buildPackage(command string) error {
-	return runCommandWithLog(
-		makeShellCommand(command, task.workDir),
-		task.logger.WithPrefix("[build] "),
-	)
+func (task *Task) buildPackage(commandString, environ string) error {
+	command := makeShellCommand(commandString, task.workDir)
+	command.Env = append(command.Env, environ)
+	return runCommandWithLog(command, task.logger.WithPrefix("[build] "))
 }
 
 func (task *Task) installPackage(command string) error {
