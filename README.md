@@ -18,10 +18,15 @@ upload script is not in the packaging and you must provide it by yourself.
 
 Logs will be outputted in realtime back to the requesting client.
 
-You can pass additional environment variable to build command via GET parameter
+You can pass additional environment variables to build command via GET parameter
 `environ`: 
 ```
 /v1/build/<repo-url>?environ=KEY=value
+```
+
+Multiple variables can be passed providing several `environ` parameters:
+```
+/v1/build/<repo-url>?environ=KEY1=value&environ=KEY2=othervalue
 ```
 
 # Installation
