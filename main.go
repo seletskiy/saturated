@@ -142,13 +142,22 @@ func (handler *BuildHandler) ServeHTTP(
 
 	fmt.Fprintf(topLevelLogger, "running build task for '%s'", repoUrl)
 
-	err := runBuild(
+	err := request.ParseForm()
+	if err != nil {
+		response.WriteHeader(http.StatusBadRequest)
+		fmt.Fprintf(topLevelLogger, "error parsing request: %s", err)
+		return
+	}
+
+	environ := request.Form["environ"]
+	err = runBuild(
 		repoUrl,
 		handler.reposPath,
 		handler.branchName,
 		handler.buildCommand,
 		handler.installCommand,
 		logger,
+		environ,
 	)
 	if err != nil {
 		fmt.Fprintf(topLevelLogger, "error during build: %s", err)
@@ -159,7 +168,7 @@ func (handler *BuildHandler) ServeHTTP(
 
 func runBuild(
 	repoUrl, reposPath, branchName, buildCommand, installCommand string,
-	logger PrefixLogger,
+	logger PrefixLogger, environ []string,
 ) error {
 	repoDir := regexp.MustCompile(`[^\w-@.]`).ReplaceAllLiteralString(
 		repoUrl, "__",
@@ -180,7 +189,7 @@ func runBuild(
 	}
 
 	err = task.run(
-		repoPath, branchName, buildCommand, installCommand,
+		repoPath, branchName, buildCommand, installCommand, environ,
 	)
 
 	if err != nil {
