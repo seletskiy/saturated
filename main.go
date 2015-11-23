@@ -144,10 +144,8 @@ func (handler *BuildHandler) ServeHTTP(
 
 	err := request.ParseForm()
 	if err != nil {
-		errorMessage := fmt.Sprintf("error parsing request: %s", err)
-		fmt.Fprintf(topLevelLogger, errorMessage)
 		response.WriteHeader(http.StatusBadRequest)
-		response.Write([]byte(errorMessage))
+		fmt.Fprintf(topLevelLogger, "error parsing request: %s", err)
 		return
 	}
 
