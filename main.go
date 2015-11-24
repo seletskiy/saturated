@@ -54,7 +54,7 @@ Options:
 
 func main() {
 	args, err := docopt.Parse(
-		strings.Replace(usage, "$0", os.Args[0], -1),
+		strings.Replace(usage, "$0", filepath.Base(os.Args[0]), -1),
 		nil, true, "1.0", false,
 	)
 	if err != nil {
