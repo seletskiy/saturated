@@ -1,6 +1,7 @@
 package main
 
 import (
+	"container/ring"
 	"fmt"
 	"io"
 	"log"
@@ -10,7 +11,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -29,7 +29,9 @@ type BuildHandler struct {
 	installCommand string
 	branchName     string
 	queue          *BuildQueue
-	lastBuilds     map[string]BuildInfo
+
+	lastBuilds   *ring.Ring
+	currentBuild *ring.Ring
 }
 
 type RepoExistError struct {
@@ -37,20 +39,17 @@ type RepoExistError struct {
 }
 
 type BuildInfo struct {
-	Repository string
+	repository string
 	startedAt  time.Time
 	finishedAt time.Time
-	Status     string
-	Error      string
+	status     string
+	error      string
+
+	pointer *ring.Ring
 }
 
-func NewBuildInfo(repoName string) (string, BuildInfo) {
-	started := time.Now()
-	return fmt.Sprintf("%x", started.UnixNano()), BuildInfo{
-		Repository: repoName,
-		startedAt:  started,
-		Status:     "in progress",
-	}
+func (info BuildInfo) Save() {
+	info.pointer.Value = info
 }
 
 func (info BuildInfo) Duration() time.Duration {
@@ -90,6 +89,8 @@ Options:
     -v --version  Show version.
     -u <user>     Run build command with privileges of specified user.
                   [default: nobody]
+    -k <count>    Maximum builds count to keep in ring buffer.
+                  [default: 20]
 `
 
 func main() {
@@ -109,6 +110,12 @@ func main() {
 		installCommand = args["-i"].(string)
 		branchName     = args["-b"].(string)
 	)
+	maxBuildCount, err := strconv.Atoi(args["-k"].(string))
+	if err != nil {
+		log.Fatalf("can't parse max builds count: %s", err)
+	}
+
+	ringBuffer := ring.New(maxBuildCount)
 
 	buildUser, err := user.Lookup(buildUserName)
 	if err != nil {
@@ -130,7 +137,9 @@ func main() {
 		installCommand: installCommand,
 		branchName:     branchName,
 		queue:          NewBuildQueue(),
-		lastBuilds:     map[string]BuildInfo{},
+
+		lastBuilds:   ringBuffer,
+		currentBuild: ringBuffer,
 	}
 
 	log.Printf("listening on '%s'...", listenAddress)
@@ -237,7 +246,8 @@ func (handler *BuildHandler) handleBuild(
 		return
 	}
 
-	err = handler.runBuild(
+	buildInfo := handler.saveNewBuild(repoUrl)
+	err = runBuild(
 		repoUrl,
 		handler.reposPath,
 		handler.branchName,
@@ -246,11 +256,16 @@ func (handler *BuildHandler) handleBuild(
 		logger,
 		environ,
 	)
+	buildInfo.finishedAt = time.Now()
 	if err != nil {
 		fmt.Fprintf(topLevelLogger, "error during build: %s", err)
+		buildInfo.status = "error"
+		buildInfo.error = err.Error()
 	} else {
 		fmt.Fprintf(topLevelLogger, "build completed")
+		buildInfo.status = "success"
 	}
+	buildInfo.Save()
 }
 
 func (handler BuildHandler) handleListBuilds(
@@ -258,45 +273,29 @@ func (handler BuildHandler) handleListBuilds(
 ) {
 	writer := tabwriter.NewWriter(response, 20, 8, 4, ' ', 0)
 	defer writer.Flush()
-	builds := make([]string, len(handler.lastBuilds))
-	index := 0
-	for build := range handler.lastBuilds {
-		builds[index] = build
-		index++
-	}
 
-	writer.Write([]byte(fmt.Sprintf(
-		"%s\t%s\t%s\t%s\n",
+	fmt.Fprintf(writer, "%s\t%s\t%s\t%s\n",
 		"Repo url", "Duration", "Status", "Error Message",
-	)))
-	sort.Strings(builds)
-	for _, build := range builds {
-		buildInfo := handler.lastBuilds[build]
-		writer.Write([]byte(fmt.Sprintf(
-			"%s\t%s\t%s\t%s\n",
-			buildInfo.Repository, buildInfo.Duration(),
-			buildInfo.Status, buildInfo.Error,
-		)))
-	}
+	)
+
+	handler.lastBuilds.Do(func(val interface{}) {
+		if val == nil {
+			return
+		}
+
+		buildInfo := val.(BuildInfo)
+		fmt.Fprintf(writer, "%s\t%s\t%s\t%s\n",
+			buildInfo.repository, buildInfo.Duration(),
+			buildInfo.status, buildInfo.error,
+		)
+
+	})
 }
 
-func (handler *BuildHandler) runBuild(
+func runBuild(
 	repoUrl, reposPath, branchName, buildCommand, installCommand string,
 	logger PrefixLogger, environ []string,
-) (err error) {
-	buildID, buildInfo := NewBuildInfo(repoUrl)
-	handler.lastBuilds[buildID] = buildInfo
-	defer func() {
-		buildInfo.finishedAt = time.Now()
-		if err != nil {
-			buildInfo.Status = "error"
-			buildInfo.Error = err.Error()
-		} else {
-			buildInfo.Status = "success"
-		}
-		handler.lastBuilds[buildID] = buildInfo
-	}()
-
+) error {
 	repoDir := regexp.MustCompile(`[^\w-@.]`).ReplaceAllLiteralString(
 		repoUrl, "__",
 	)
@@ -310,7 +309,7 @@ func (handler *BuildHandler) runBuild(
 		workDir: workDir,
 	}
 
-	err = task.updateMirror(repoUrl, repoPath)
+	err := task.updateMirror(repoUrl, repoPath)
 	if err != nil {
 		return fmt.Errorf("can't update mirror: %s", err)
 	}
@@ -332,4 +331,22 @@ func rawSetuid(uid int) error {
 	}
 
 	return nil
+}
+
+func (handler *BuildHandler) saveNewBuild(repoName string) BuildInfo {
+	info := BuildInfo{
+		repository: repoName,
+		startedAt:  time.Now(),
+		status:     "in progress",
+
+		pointer: handler.currentBuild,
+	}
+	handler.currentBuild.Value = info
+
+	if handler.currentBuild.Next() == handler.lastBuilds {
+		handler.lastBuilds = handler.lastBuilds.Prev()
+	}
+
+	handler.currentBuild = handler.currentBuild.Prev()
+	return info
 }
