@@ -6,9 +6,14 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/user"
 	"path/filepath"
 	"regexp"
+	"runtime"
+	"strconv"
 	"strings"
+	"sync"
+	"syscall"
 
 	"github.com/docopt/docopt-go"
 )
@@ -16,6 +21,7 @@ import (
 type BuildHandler struct {
 	reposPath      string
 	listenAddress  string
+	buildUid       int
 	buildCommand   string
 	installCommand string
 	branchName     string
@@ -33,7 +39,7 @@ Tool will serve REST API on specified address:
     * /v1/build/<repo-url>
 
       - GET: clone specified repo, build package and run install command;
-	    output logs in realtime.
+           output logs in realtime.
 
 Usage:
     $0 [options] <address>
@@ -52,6 +58,8 @@ Options:
                   [default: pkgbuild]
     -h --help     Show this help.
     -v --version  Show version.
+    -u <user>     Run build command with privileges of specified user.
+                  [default: nobody]
 `
 
 func main() {
@@ -66,14 +74,28 @@ func main() {
 	var (
 		reposPath      = args["-w"].(string)
 		listenAddress  = args["<address>"].(string)
+		buildUserName  = args["-u"].(string)
 		buildCommand   = args["-m"].(string)
 		installCommand = args["-i"].(string)
 		branchName     = args["-b"].(string)
 	)
 
+	buildUser, err := user.Lookup(buildUserName)
+	if err != nil {
+		log.Fatalf("can't lookup user '%s': %s", buildUserName, err)
+	}
+
+	buildUid, _ := strconv.Atoi(buildUser.Uid)
+
+	err = checkSetuid(buildUid)
+	if err != nil {
+		log.Fatalf("setuid %d check failed: %s", buildUid, err)
+	}
+
 	handler := &BuildHandler{
 		reposPath:      reposPath,
 		listenAddress:  listenAddress,
+		buildUid:       buildUid,
 		buildCommand:   buildCommand,
 		installCommand: installCommand,
 		branchName:     branchName,
@@ -86,6 +108,23 @@ func main() {
 	if err != nil {
 		log.Fatalf("can't listen on '%s': %s", listenAddress, err)
 	}
+}
+
+// checkSetuid calls syscall SYS_SETUID in safe mode (in additional goroutine)
+func checkSetuid(uid int) (err error) {
+	waiting := sync.WaitGroup{}
+	waiting.Add(1)
+
+	go func() {
+		defer waiting.Done()
+
+		// be aware, err is named returning variable and changes by reference
+		err = rawSetuid(uid)
+	}()
+
+	waiting.Wait()
+
+	return err
 }
 
 func (handler *BuildHandler) ServeHTTP(
@@ -143,6 +182,18 @@ func (handler *BuildHandler) ServeHTTP(
 	}
 
 	environ := request.Form["environ"]
+
+	runtime.LockOSThread()
+
+	err = rawSetuid(handler.buildUid)
+	if err != nil {
+		response.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprintf(
+			topLevelLogger, "can't set uid to %d: %s", handler.buildUid, err,
+		)
+		return
+	}
+
 	err = runBuild(
 		repoUrl,
 		handler.reposPath,
@@ -160,7 +211,8 @@ func (handler *BuildHandler) ServeHTTP(
 }
 
 func runBuild(
-	repoUrl, reposPath, branchName, buildCommand, installCommand string,
+	repoUrl, reposPath, branchName string,
+	buildCommand, installCommand string,
 	logger PrefixLogger, environ []string,
 ) error {
 	repoDir := regexp.MustCompile(`[^\w-@.]`).ReplaceAllLiteralString(
@@ -184,9 +236,17 @@ func runBuild(
 	err = task.run(
 		repoPath, branchName, buildCommand, installCommand, environ,
 	)
-
 	if err != nil {
 		return fmt.Errorf("can't install package: %s", err)
+	}
+
+	return nil
+}
+
+func rawSetuid(uid int) error {
+	_, _, errno := syscall.RawSyscall(syscall.SYS_SETUID, uintptr(uid), 0, 0)
+	if errno != 0 {
+		return errno
 	}
 
 	return nil
