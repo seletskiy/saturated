@@ -82,19 +82,10 @@ func main() {
 
 	log.Printf("listening on '%s'...", listenAddress)
 
-	err = handler.ListenAndServe(listenAddress)
+	err = http.ListenAndServe(listenAddress, handler)
 	if err != nil {
 		log.Fatalf("can't listen on '%s': %s", listenAddress, err)
 	}
-}
-
-func (handler *BuildHandler) ListenAndServe(address string) error {
-	server := &http.Server{
-		Addr:    address,
-		Handler: handler,
-	}
-
-	return server.ListenAndServe()
 }
 
 func (handler *BuildHandler) ServeHTTP(
