@@ -36,11 +36,11 @@ Tool will serve REST API on specified address:
 	    output logs in realtime.
 
 Usage:
-    $0 -h | --help
     $0 [options] <address>
+    $0 -h | --help
+    $0 -v | --version
 
 Options:
-    -h --help     Show this help.
     -m <build>    Build command.
                   [default: makepkg -sr --noconfirm]
     -i <install>  Install command.
@@ -50,6 +50,8 @@ Options:
     -b <branch>   Branch, that will be used for checkout. This branch should
                   contain PKGBUILD file.
                   [default: pkgbuild]
+    -h --help     Show this help.
+    -v --version  Show version.
 `
 
 func main() {
