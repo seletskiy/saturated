@@ -176,11 +176,7 @@ func (handler *BuildHandler) ServeHTTP(
 	case strings.HasPrefix(request.URL.Path, "/v1/build/"):
 		handler.handleBuild(response, request)
 	default:
-		response.WriteHeader(http.StatusBadRequest)
-		io.WriteString(
-			response,
-			"error: <repo-url> required in URL /v1/build/<repo-url>",
-		)
+		http.NotFound(response, request)
 	}
 }
 
