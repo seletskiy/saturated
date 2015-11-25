@@ -30,7 +30,8 @@ type BuildHandler struct {
 	branchName     string
 	queue          *BuildQueue
 
-	lastBuild *ring.Ring
+	lastBuild      *ring.Ring
+	buildListMutex sync.Mutex
 }
 
 type RepoExistError struct {
@@ -327,6 +328,8 @@ func rawSetuid(uid int) error {
 }
 
 func (handler *BuildHandler) saveNewBuild(repoName string) BuildInfo {
+	handler.buildListMutex.Lock()
+	defer handler.buildListMutex.Unlock()
 	info := BuildInfo{
 		repository: repoName,
 		startedAt:  time.Now(),
