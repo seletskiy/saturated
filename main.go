@@ -30,8 +30,7 @@ type BuildHandler struct {
 	branchName     string
 	queue          *BuildQueue
 
-	lastBuilds   *ring.Ring
-	currentBuild *ring.Ring
+	lastBuild *ring.Ring
 }
 
 type RepoExistError struct {
@@ -115,8 +114,6 @@ func main() {
 		log.Fatalf("can't parse max builds count: %s", err)
 	}
 
-	ringBuffer := ring.New(maxBuildCount)
-
 	buildUser, err := user.Lookup(buildUserName)
 	if err != nil {
 		log.Fatalf("can't lookup user '%s': %s", buildUserName, err)
@@ -138,8 +135,7 @@ func main() {
 		branchName:     branchName,
 		queue:          NewBuildQueue(),
 
-		lastBuilds:   ringBuffer,
-		currentBuild: ringBuffer,
+		lastBuild: ring.New(maxBuildCount),
 	}
 
 	log.Printf("listening on '%s'...", listenAddress)
@@ -274,7 +270,7 @@ func (handler BuildHandler) handleListBuilds(
 		"Repo url", "Duration", "Status", "Error Message",
 	)
 
-	handler.lastBuilds.Do(func(val interface{}) {
+	handler.lastBuild.Next().Do(func(val interface{}) {
 		if val == nil {
 			return
 		}
@@ -335,14 +331,10 @@ func (handler *BuildHandler) saveNewBuild(repoName string) BuildInfo {
 		startedAt:  time.Now(),
 		status:     "in progress",
 
-		pointer: handler.currentBuild,
+		pointer: handler.lastBuild,
 	}
-	handler.currentBuild.Value = info
+	handler.lastBuild.Value = info
 
-	if handler.currentBuild.Next() == handler.lastBuilds {
-		handler.lastBuilds = handler.lastBuilds.Prev()
-	}
-
-	handler.currentBuild = handler.currentBuild.Prev()
+	handler.lastBuild = handler.lastBuild.Prev()
 	return info
 }
