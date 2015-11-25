@@ -36,11 +36,11 @@ Tool will serve REST API on specified address:
 	    output logs in realtime.
 
 Usage:
-    $0 -h | --help
     $0 [options] <address>
+    $0 -h | --help
+    $0 -v | --version
 
 Options:
-    -h --help     Show this help.
     -m <build>    Build command.
                   [default: makepkg -sr --noconfirm]
     -i <install>  Install command.
@@ -50,11 +50,13 @@ Options:
     -b <branch>   Branch, that will be used for checkout. This branch should
                   contain PKGBUILD file.
                   [default: pkgbuild]
+    -h --help     Show this help.
+    -v --version  Show version.
 `
 
 func main() {
 	args, err := docopt.Parse(
-		strings.Replace(usage, "$0", os.Args[0], -1),
+		strings.Replace(usage, "$0", filepath.Base(os.Args[0]), -1),
 		nil, true, "1.0", false,
 	)
 	if err != nil {
@@ -80,19 +82,10 @@ func main() {
 
 	log.Printf("listening on '%s'...", listenAddress)
 
-	err = handler.ListenAndServe(listenAddress)
+	err = http.ListenAndServe(listenAddress, handler)
 	if err != nil {
 		log.Fatalf("can't listen on '%s': %s", listenAddress, err)
 	}
-}
-
-func (handler *BuildHandler) ListenAndServe(address string) error {
-	server := &http.Server{
-		Addr:    address,
-		Handler: handler,
-	}
-
-	return server.ListenAndServe()
 }
 
 func (handler *BuildHandler) ServeHTTP(
