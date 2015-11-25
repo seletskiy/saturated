@@ -42,12 +42,12 @@ func (task *Task) run(
 
 	err = task.checkoutBranch(branchName)
 	if err != nil {
-		return err
+		return fmt.Errorf("can't checkout branch '%s': %s", branchName, err)
 	}
 
 	err = task.buildPackage(buildCommand, environ)
 	if err != nil {
-		return err
+		return fmt.Errorf("can't build package: %s", err)
 	}
 
 	if installCommand != "" {
