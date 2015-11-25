@@ -171,7 +171,7 @@ func (handler *BuildHandler) ServeHTTP(
 	response http.ResponseWriter, request *http.Request,
 ) {
 	switch {
-	case request.URL.Path == "/v1/builds":
+	case strings.TrimSuffix(request.URL.Path, "/") == "/v1/builds":
 		handler.handleListBuilds(response, request)
 	case strings.HasPrefix(request.URL.Path, "/v1/build/"):
 		handler.handleBuild(response, request)
