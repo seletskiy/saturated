@@ -269,7 +269,7 @@ func (handler BuildHandler) handleListBuilds(
 	defer writer.Flush()
 
 	fmt.Fprintf(writer, "%s\t%s\t%s\t%s\n",
-		"Repo url", "Duration", "Status", "Error Message",
+		"Repo URL", "Duration", "Status", "Error Message",
 	)
 
 	handler.lastBuild.Next().Do(func(val interface{}) {
