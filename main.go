@@ -102,14 +102,15 @@ func main() {
 	}
 
 	var (
-		reposPath      = args["-w"].(string)
-		listenAddress  = args["<address>"].(string)
-		buildUserName  = args["-u"].(string)
-		buildCommand   = args["-m"].(string)
-		installCommand = args["-i"].(string)
-		branchName     = args["-b"].(string)
+		reposPath           = args["-w"].(string)
+		listenAddress       = args["<address>"].(string)
+		buildUserName       = args["-u"].(string)
+		buildCommand        = args["-m"].(string)
+		installCommand      = args["-i"].(string)
+		branchName          = args["-b"].(string)
+		maxBuildCountString = args["-k"].(string)
 	)
-	maxBuildCount, err := strconv.Atoi(args["-k"].(string))
+	maxBuildCount, err := strconv.Atoi(maxBuildCountString)
 	if err != nil {
 		log.Fatalf("can't parse max builds count: %s", err)
 	}
