@@ -271,7 +271,7 @@ func (handler BuildHandler) handleListBuilds(
 		"Repo URL", "Duration", "Status", "Error Message",
 	)
 
-	handler.lastBuild.Next().Do(func(val interface{}) {
+	handler.lastBuild.Do(func(val interface{}) {
 		if val == nil {
 			return
 		}
@@ -329,9 +329,10 @@ func rawSetuid(uid int) error {
 func (handler *BuildHandler) saveNewBuild(buildInfo BuildInfo) *ring.Ring {
 	handler.buildListMutex.Lock()
 	defer handler.buildListMutex.Unlock()
-	handler.lastBuild.Value = buildInfo
 
 	// moving backward for LIFO order in list
 	handler.lastBuild = handler.lastBuild.Prev()
-	return handler.lastBuild.Next()
+	handler.lastBuild.Value = buildInfo
+
+	return handler.lastBuild
 }
