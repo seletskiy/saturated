@@ -24,7 +24,7 @@ import (
 type BuildHandler struct {
 	reposPath      string
 	listenAddress  string
-	buildUid       int
+	buildUID       int
 	buildCommand   string
 	installCommand string
 	branchName     string
@@ -121,17 +121,17 @@ func main() {
 		log.Fatalf("can't lookup user '%s': %s", buildUserName, err)
 	}
 
-	buildUid, _ := strconv.Atoi(buildUser.Uid)
+	buildUID, _ := strconv.Atoi(buildUser.Uid)
 
-	err = checkSetuid(buildUid)
+	err = checkSetuid(buildUID)
 	if err != nil {
-		log.Fatalf("setuid %d check failed: %s", buildUid, err)
+		log.Fatalf("setuid %d check failed: %s", buildUID, err)
 	}
 
 	handler := &BuildHandler{
 		reposPath:      reposPath,
 		listenAddress:  listenAddress,
-		buildUid:       buildUid,
+		buildUID:       buildUID,
 		buildCommand:   buildCommand,
 		installCommand: installCommand,
 		branchName:     branchName,
@@ -181,8 +181,8 @@ func (handler *BuildHandler) ServeHTTP(
 func (handler *BuildHandler) handleBuild(
 	response http.ResponseWriter, request *http.Request,
 ) {
-	repoUrl := strings.TrimPrefix(request.URL.Path, "/v1/build/")
-	if repoUrl == "" {
+	repoURL := strings.TrimPrefix(request.URL.Path, "/v1/build/")
+	if repoURL == "" {
 		response.WriteHeader(http.StatusBadRequest)
 		io.WriteString(
 			response,
@@ -206,7 +206,7 @@ func (handler *BuildHandler) handleBuild(
 
 	topLevelLogger := logger.WithPrefix("* ")
 
-	queueSize := handler.queue.GetSize(repoUrl)
+	queueSize := handler.queue.GetSize(repoURL)
 	if queueSize > 0 {
 		fmt.Fprintf(
 			topLevelLogger, "you are %d in the build queue", queueSize,
@@ -214,11 +214,11 @@ func (handler *BuildHandler) handleBuild(
 
 	}
 
-	handler.queue.Seize(repoUrl)
+	handler.queue.Seize(repoURL)
 
-	defer handler.queue.Free(repoUrl)
+	defer handler.queue.Free(repoURL)
 
-	fmt.Fprintf(topLevelLogger, "running build task for '%s'", repoUrl)
+	fmt.Fprintf(topLevelLogger, "running build task for '%s'", repoURL)
 
 	err := request.ParseForm()
 	if err != nil {
@@ -231,18 +231,18 @@ func (handler *BuildHandler) handleBuild(
 
 	runtime.LockOSThread()
 
-	err = rawSetuid(handler.buildUid)
+	err = rawSetuid(handler.buildUID)
 	if err != nil {
 		response.WriteHeader(http.StatusInternalServerError)
 		fmt.Fprintf(
-			topLevelLogger, "can't set uid to %d: %s", handler.buildUid, err,
+			topLevelLogger, "can't set uid to %d: %s", handler.buildUID, err,
 		)
 		return
 	}
 
-	buildInfo := handler.saveNewBuild(repoUrl)
+	buildInfo := handler.saveNewBuild(repoURL)
 	err = runBuild(
-		repoUrl,
+		repoURL,
 		handler.reposPath,
 		handler.branchName,
 		handler.buildCommand,
@@ -287,11 +287,11 @@ func (handler BuildHandler) handleListBuilds(
 }
 
 func runBuild(
-	repoUrl, reposPath, branchName, buildCommand, installCommand string,
+	repoURL, reposPath, branchName, buildCommand, installCommand string,
 	logger PrefixLogger, environ []string,
 ) error {
 	repoDir := regexp.MustCompile(`[^\w-@.]`).ReplaceAllLiteralString(
-		repoUrl, "__",
+		repoURL, "__",
 	)
 
 	repoPath := filepath.Join(reposPath, repoDir)
@@ -303,7 +303,7 @@ func runBuild(
 		workDir: workDir,
 	}
 
-	err := task.updateMirror(repoUrl, repoPath)
+	err := task.updateMirror(repoURL, repoPath)
 	if err != nil {
 		return fmt.Errorf("can't update mirror: %s", err)
 	}
