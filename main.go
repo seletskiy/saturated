@@ -234,12 +234,12 @@ func (handler *BuildHandler) handleBuild(
 		return
 	}
 
-	buildInfo := BuildInfo{
+	buildInfo := &BuildInfo{
 		repository: repoURL,
 		startedAt:  time.Now(),
 		status:     "in progress",
 	}
-	buildInfoPointer := handler.saveNewBuild(buildInfo)
+	handler.saveNewBuild(buildInfo)
 	err = runBuild(
 		repoURL,
 		handler.reposPath,
@@ -258,7 +258,6 @@ func (handler *BuildHandler) handleBuild(
 		fmt.Fprintf(topLevelLogger, "build completed")
 		buildInfo.status = "success"
 	}
-	buildInfoPointer.Value = buildInfo
 }
 
 func (handler BuildHandler) handleListBuilds(
@@ -276,7 +275,7 @@ func (handler BuildHandler) handleListBuilds(
 			return
 		}
 
-		buildInfo := val.(BuildInfo)
+		buildInfo := val.(*BuildInfo)
 		fmt.Fprintf(writer, "%s\t%s\t%s\t%s\n",
 			buildInfo.repository, buildInfo.Duration(),
 			buildInfo.status, buildInfo.error,
@@ -326,13 +325,11 @@ func rawSetuid(uid int) error {
 	return nil
 }
 
-func (handler *BuildHandler) saveNewBuild(buildInfo BuildInfo) *ring.Ring {
+func (handler *BuildHandler) saveNewBuild(buildInfo *BuildInfo) {
 	handler.buildListMutex.Lock()
 	defer handler.buildListMutex.Unlock()
 
 	// moving backward for LIFO order in list
 	handler.lastBuild = handler.lastBuild.Prev()
 	handler.lastBuild.Value = buildInfo
-
-	return handler.lastBuild
 }
