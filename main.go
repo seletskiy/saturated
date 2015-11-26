@@ -44,12 +44,6 @@ type BuildInfo struct {
 	finishedAt time.Time
 	status     string
 	error      string
-
-	pointer *ring.Ring
-}
-
-func (info BuildInfo) Save() {
-	info.pointer.Value = info
 }
 
 func (info BuildInfo) Duration() time.Duration {
@@ -240,7 +234,12 @@ func (handler *BuildHandler) handleBuild(
 		return
 	}
 
-	buildInfo := handler.saveNewBuild(repoURL)
+	buildInfo := BuildInfo{
+		repository: repoURL,
+		startedAt:  time.Now(),
+		status:     "in progress",
+	}
+	buildInfoPointer := handler.saveNewBuild(buildInfo)
 	err = runBuild(
 		repoURL,
 		handler.reposPath,
@@ -259,7 +258,7 @@ func (handler *BuildHandler) handleBuild(
 		fmt.Fprintf(topLevelLogger, "build completed")
 		buildInfo.status = "success"
 	}
-	buildInfo.Save()
+	buildInfoPointer.Value = buildInfo
 }
 
 func (handler BuildHandler) handleListBuilds(
@@ -327,18 +326,11 @@ func rawSetuid(uid int) error {
 	return nil
 }
 
-func (handler *BuildHandler) saveNewBuild(repoName string) BuildInfo {
+func (handler *BuildHandler) saveNewBuild(buildInfo BuildInfo) *ring.Ring {
 	handler.buildListMutex.Lock()
 	defer handler.buildListMutex.Unlock()
-	info := BuildInfo{
-		repository: repoName,
-		startedAt:  time.Now(),
-		status:     "in progress",
-
-		pointer: handler.lastBuild,
-	}
-	handler.lastBuild.Value = info
+	handler.lastBuild.Value = buildInfo
 
 	handler.lastBuild = handler.lastBuild.Prev()
-	return info
+	return handler.lastBuild.Next()
 }
