@@ -331,6 +331,7 @@ func (handler *BuildHandler) saveNewBuild(buildInfo BuildInfo) *ring.Ring {
 	defer handler.buildListMutex.Unlock()
 	handler.lastBuild.Value = buildInfo
 
+	// moving backward for LIFO order in list
 	handler.lastBuild = handler.lastBuild.Prev()
 	return handler.lastBuild.Next()
 }
