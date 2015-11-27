@@ -2,9 +2,8 @@
 Description=Dead simple makepkg builder server
 
 [Service]
-User=makepkg
 LimitNOFILE=65535
-ExecStart=/usr/bin/saturated :8080
+ExecStart=/usr/bin/saturated -u makepkg :80
 Restart=always
 
 [Install]

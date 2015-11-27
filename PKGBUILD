@@ -1,5 +1,5 @@
 pkgname=saturated
-pkgver=20150921.4_b96240e
+pkgver=20151125.19_d0008dd
 pkgrel=1
 pkgdesc="Dead simple makepkg builder server"
 arch=('i686' 'x86_64')
@@ -15,7 +15,7 @@ source=(
 )
 
 md5sums=('SKIP'
-         '45e69d6b83e64802a62b2b3e6909a55c'
+         '4275f2579df905f2edabe8105769eabb'
          '2c20ab85afad8668481e61a924193617')
 
 backup=(
