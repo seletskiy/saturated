@@ -13,8 +13,8 @@ type Task struct {
 	workDir string
 }
 
-func (task *Task) updateMirror(repoUrl, repoPath string) error {
-	err := task.clone(repoUrl, repoPath)
+func (task *Task) updateMirror(repoURL, repoPath string) error {
+	err := task.clone(repoURL, repoPath)
 	if err != nil {
 		if _, ok := err.(RepoExistError); !ok {
 			return err
@@ -60,13 +60,13 @@ func (task *Task) run(
 	return nil
 }
 
-func (task *Task) clone(repoUrl, repoPath string) error {
+func (task *Task) clone(repoURL, repoPath string) error {
 	if _, err := os.Stat(filepath.Join(repoPath, "HEAD")); err == nil {
 		return RepoExistError{}
 	}
 
 	return runCommandWithLog(
-		exec.Command("git", "clone", "--mirror", repoUrl, repoPath),
+		exec.Command("git", "clone", "--mirror", repoURL, repoPath),
 		task.logger.WithPrefix("[clone] "),
 	)
 }

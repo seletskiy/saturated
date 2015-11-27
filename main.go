@@ -1,6 +1,7 @@
 package main
 
 import (
+	"container/ring"
 	"fmt"
 	"io"
 	"log"
@@ -14,6 +15,8 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"text/tabwriter"
+	"time"
 
 	"github.com/docopt/docopt-go"
 )
@@ -21,15 +24,35 @@ import (
 type BuildHandler struct {
 	reposPath      string
 	listenAddress  string
-	buildUid       int
+	buildUID       int
 	buildCommand   string
 	installCommand string
 	branchName     string
 	queue          *BuildQueue
+
+	lastBuild      *ring.Ring
+	buildListMutex sync.Mutex
 }
 
 type RepoExistError struct {
 	error
+}
+
+type BuildInfo struct {
+	repository string
+	startedAt  time.Time
+	finishedAt time.Time
+	status     string
+	error      string
+}
+
+func (info BuildInfo) Duration() time.Duration {
+	switch info.finishedAt {
+	case time.Time{}:
+		return time.Now().Sub(info.startedAt)
+	default:
+		return info.finishedAt.Sub(info.startedAt)
+	}
 }
 
 const usage = `saturated - dead simple makepkg build server.
@@ -60,6 +83,8 @@ Options:
     -v --version  Show version.
     -u <user>     Run build command with privileges of specified user.
                   [default: nobody]
+    -k <count>    Maximum builds count to keep in ring buffer.
+                  [default: 20]
 `
 
 func main() {
@@ -72,34 +97,41 @@ func main() {
 	}
 
 	var (
-		reposPath      = args["-w"].(string)
-		listenAddress  = args["<address>"].(string)
-		buildUserName  = args["-u"].(string)
-		buildCommand   = args["-m"].(string)
-		installCommand = args["-i"].(string)
-		branchName     = args["-b"].(string)
+		reposPath           = args["-w"].(string)
+		listenAddress       = args["<address>"].(string)
+		buildUserName       = args["-u"].(string)
+		buildCommand        = args["-m"].(string)
+		installCommand      = args["-i"].(string)
+		branchName          = args["-b"].(string)
+		maxBuildCountString = args["-k"].(string)
 	)
+	maxBuildCount, err := strconv.Atoi(maxBuildCountString)
+	if err != nil {
+		log.Fatalf("can't parse max builds count: %s", err)
+	}
 
 	buildUser, err := user.Lookup(buildUserName)
 	if err != nil {
 		log.Fatalf("can't lookup user '%s': %s", buildUserName, err)
 	}
 
-	buildUid, _ := strconv.Atoi(buildUser.Uid)
+	buildUID, _ := strconv.Atoi(buildUser.Uid)
 
-	err = checkSetuid(buildUid)
+	err = checkSetuid(buildUID)
 	if err != nil {
-		log.Fatalf("setuid %d check failed: %s", buildUid, err)
+		log.Fatalf("setuid %d check failed: %s", buildUID, err)
 	}
 
 	handler := &BuildHandler{
 		reposPath:      reposPath,
 		listenAddress:  listenAddress,
-		buildUid:       buildUid,
+		buildUID:       buildUID,
 		buildCommand:   buildCommand,
 		installCommand: installCommand,
 		branchName:     branchName,
 		queue:          NewBuildQueue(),
+
+		lastBuild: ring.New(maxBuildCount),
 	}
 
 	log.Printf("listening on '%s'...", listenAddress)
@@ -130,13 +162,21 @@ func checkSetuid(uid int) (err error) {
 func (handler *BuildHandler) ServeHTTP(
 	response http.ResponseWriter, request *http.Request,
 ) {
-	if !strings.HasPrefix(request.URL.Path, "/v1/build/") {
-		response.WriteHeader(http.StatusNotFound)
-		return
+	switch {
+	case strings.TrimSuffix(request.URL.Path, "/") == "/v1/builds":
+		handler.handleListBuilds(response, request)
+	case strings.HasPrefix(request.URL.Path, "/v1/build/"):
+		handler.handleBuild(response, request)
+	default:
+		http.NotFound(response, request)
 	}
+}
 
-	repoUrl := strings.TrimPrefix(request.URL.Path, "/v1/build/")
-	if repoUrl == "" {
+func (handler *BuildHandler) handleBuild(
+	response http.ResponseWriter, request *http.Request,
+) {
+	repoURL := strings.TrimPrefix(request.URL.Path, "/v1/build/")
+	if repoURL == "" {
 		response.WriteHeader(http.StatusBadRequest)
 		io.WriteString(
 			response,
@@ -160,7 +200,7 @@ func (handler *BuildHandler) ServeHTTP(
 
 	topLevelLogger := logger.WithPrefix("* ")
 
-	queueSize := handler.queue.GetSize(repoUrl)
+	queueSize := handler.queue.GetSize(repoURL)
 	if queueSize > 0 {
 		fmt.Fprintf(
 			topLevelLogger, "you are %d in the build queue", queueSize,
@@ -168,11 +208,11 @@ func (handler *BuildHandler) ServeHTTP(
 
 	}
 
-	handler.queue.Seize(repoUrl)
+	handler.queue.Seize(repoURL)
 
-	defer handler.queue.Free(repoUrl)
+	defer handler.queue.Free(repoURL)
 
-	fmt.Fprintf(topLevelLogger, "running build task for '%s'", repoUrl)
+	fmt.Fprintf(topLevelLogger, "running build task for '%s'", repoURL)
 
 	err := request.ParseForm()
 	if err != nil {
@@ -185,17 +225,23 @@ func (handler *BuildHandler) ServeHTTP(
 
 	runtime.LockOSThread()
 
-	err = rawSetuid(handler.buildUid)
+	err = rawSetuid(handler.buildUID)
 	if err != nil {
 		response.WriteHeader(http.StatusInternalServerError)
 		fmt.Fprintf(
-			topLevelLogger, "can't set uid to %d: %s", handler.buildUid, err,
+			topLevelLogger, "can't set uid to %d: %s", handler.buildUID, err,
 		)
 		return
 	}
 
+	buildInfo := &BuildInfo{
+		repository: repoURL,
+		startedAt:  time.Now(),
+		status:     "in progress",
+	}
+	handler.saveNewBuild(buildInfo)
 	err = runBuild(
-		repoUrl,
+		repoURL,
 		handler.reposPath,
 		handler.branchName,
 		handler.buildCommand,
@@ -203,20 +249,47 @@ func (handler *BuildHandler) ServeHTTP(
 		logger,
 		environ,
 	)
+	buildInfo.finishedAt = time.Now()
 	if err != nil {
 		fmt.Fprintf(topLevelLogger, "error during build: %s", err)
+		buildInfo.status = "error"
+		buildInfo.error = err.Error()
 	} else {
 		fmt.Fprintf(topLevelLogger, "build completed")
+		buildInfo.status = "success"
 	}
 }
 
+func (handler BuildHandler) handleListBuilds(
+	response http.ResponseWriter, request *http.Request,
+) {
+	writer := tabwriter.NewWriter(response, 20, 8, 4, ' ', 0)
+	defer writer.Flush()
+
+	fmt.Fprintf(writer, "%s\t%s\t%s\t%s\n",
+		"Repo URL", "Duration", "Status", "Error Message",
+	)
+
+	handler.lastBuild.Do(func(val interface{}) {
+		if val == nil {
+			return
+		}
+
+		buildInfo := val.(*BuildInfo)
+		fmt.Fprintf(writer, "%s\t%s\t%s\t%s\n",
+			buildInfo.repository, buildInfo.Duration(),
+			buildInfo.status, buildInfo.error,
+		)
+
+	})
+}
+
 func runBuild(
-	repoUrl, reposPath, branchName string,
-	buildCommand, installCommand string,
+	repoURL, reposPath, branchName, buildCommand, installCommand string,
 	logger PrefixLogger, environ []string,
 ) error {
 	repoDir := regexp.MustCompile(`[^\w-@.]`).ReplaceAllLiteralString(
-		repoUrl, "__",
+		repoURL, "__",
 	)
 
 	repoPath := filepath.Join(reposPath, repoDir)
@@ -228,7 +301,7 @@ func runBuild(
 		workDir: workDir,
 	}
 
-	err := task.updateMirror(repoUrl, repoPath)
+	err := task.updateMirror(repoURL, repoPath)
 	if err != nil {
 		return fmt.Errorf("can't update mirror: %s", err)
 	}
@@ -250,4 +323,13 @@ func rawSetuid(uid int) error {
 	}
 
 	return nil
+}
+
+func (handler *BuildHandler) saveNewBuild(buildInfo *BuildInfo) {
+	handler.buildListMutex.Lock()
+	defer handler.buildListMutex.Unlock()
+
+	// moving backward for LIFO order in list
+	handler.lastBuild = handler.lastBuild.Prev()
+	handler.lastBuild.Value = buildInfo
 }
