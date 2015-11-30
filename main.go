@@ -7,11 +7,14 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/user"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"text/tabwriter"
 	"time"
 
@@ -21,6 +24,7 @@ import (
 type BuildHandler struct {
 	reposPath      string
 	listenAddress  string
+	buildUid       int
 	buildCommand   string
 	installCommand string
 	branchName     string
@@ -79,6 +83,8 @@ Options:
     -v --version  Show version.
     -k <count>    Maximum builds count to keep in ring buffer.
                   [default: 20]
+    -u <user>     Run build command with privileges of specified user.
+                  [default: nobody]
 `
 
 func main() {
@@ -93,14 +99,28 @@ func main() {
 	var (
 		reposPath           = args["-w"].(string)
 		listenAddress       = args["<address>"].(string)
+		buildUserName       = args["-u"].(string)
 		buildCommand        = args["-m"].(string)
 		installCommand      = args["-i"].(string)
 		branchName          = args["-b"].(string)
 		maxBuildCountString = args["-k"].(string)
 	)
+
 	maxBuildCount, err := strconv.Atoi(maxBuildCountString)
 	if err != nil {
 		log.Fatalf("can't parse max builds count: %s", err)
+	}
+
+	buildUser, err := user.Lookup(buildUserName)
+	if err != nil {
+		log.Fatalf("can't lookup user '%s': %s", buildUserName, err)
+	}
+
+	buildUid, _ := strconv.Atoi(buildUser.Uid)
+
+	err = checkSeteuid(buildUid)
+	if err != nil {
+		log.Fatal(err)
 	}
 
 	handler := &BuildHandler{
@@ -120,6 +140,25 @@ func main() {
 	if err != nil {
 		log.Fatalf("can't listen on '%s': %s", listenAddress, err)
 	}
+}
+
+// checkSeteuid calls syscall SYS_SETREUID with new uid and tries to restore
+// original euid
+func checkSeteuid(uid int) (err error) {
+	olduid := syscall.Getuid()
+
+	// be aware, err is named returning variable and changes by reference
+	err = rawSeteuid(uid)
+	if err != nil {
+		return fmt.Errorf("can't setuid to %d: %s", uid, err)
+	}
+
+	err = rawSeteuid(olduid)
+	if err != nil {
+		return fmt.Errorf("can't restore uid to %d: %s", olduid, err)
+	}
+
+	return nil
 }
 
 func (handler *BuildHandler) ServeHTTP(
@@ -191,7 +230,19 @@ func (handler *BuildHandler) handleBuild(
 		startedAt:  time.Now(),
 		status:     "in progress",
 	}
+
 	handler.saveNewBuild(buildInfo)
+
+	runtime.LockOSThread()
+
+	err = rawSeteuid(handler.buildUid)
+	if err != nil {
+		response.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprintf(
+			topLevelLogger, "can't set uid to %d: %s", handler.buildUid, err,
+		)
+		return
+	}
 
 	err = runBuild(
 		repoURL,
@@ -276,4 +327,13 @@ func (handler *BuildHandler) saveNewBuild(buildInfo *BuildInfo) {
 	// moving backward for LIFO order in list
 	handler.lastBuild = handler.lastBuild.Prev()
 	handler.lastBuild.Value = buildInfo
+}
+
+func rawSeteuid(uid int) error {
+	_, _, errno := syscall.RawSyscall(syscall.SYS_SETREUID, uintptr(uid), 0, 0)
+	if errno != 0 {
+		return errno
+	}
+
+	return nil
 }
