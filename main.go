@@ -4,6 +4,7 @@ import (
 	"container/ring"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
@@ -21,7 +22,7 @@ import (
 	"github.com/docopt/docopt-go"
 )
 
-type BuildHandler struct {
+type HTTPHandler struct {
 	reposPath      string
 	listenAddress  string
 	buildUid       int
@@ -64,10 +65,14 @@ Tool will serve REST API on specified address:
       - GET: clone specified repo, build package and run install command;
         output logs in realtime.
 
+    * /v1/key/
+
+      - GET: get current user RSA public key.
+
 Usage:
-    $0 [options] <address>
-    $0 -h | --help
-    $0 -v | --version
+    saturated [options] <address>
+    saturated -h | --help
+    saturated -v | --version
 
 Options:
     -m <build>    Build command.
@@ -79,19 +84,16 @@ Options:
     -b <branch>   Branch, that will be used for checkout. This branch should
                   contain PKGBUILD file.
                   [default: pkgbuild]
-    -h --help     Show this help.
-    -v --version  Show version.
     -k <count>    Maximum builds count to keep in ring buffer.
                   [default: 20]
     -u <user>     Run build command with privileges of specified user.
                   [default: nobody]
+    -h --help     Show this help.
+    -v --version  Show version.
 `
 
 func main() {
-	args, err := docopt.Parse(
-		strings.Replace(usage, "$0", filepath.Base(os.Args[0]), -1),
-		nil, true, "1.0", false,
-	)
+	args, err := docopt.Parse(usage, nil, true, "3.0", false)
 	if err != nil {
 		panic(err)
 	}
@@ -123,7 +125,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	handler := &BuildHandler{
+	handler := &HTTPHandler{
 		reposPath:      reposPath,
 		listenAddress:  listenAddress,
 		buildCommand:   buildCommand,
@@ -161,23 +163,30 @@ func checkSeteuid(uid int) (err error) {
 	return nil
 }
 
-func (handler *BuildHandler) ServeHTTP(
+func (handler *HTTPHandler) ServeHTTP(
 	response http.ResponseWriter, request *http.Request,
 ) {
+	url := request.URL.Path
+
 	switch {
-	case strings.TrimSuffix(request.URL.Path, "/") == "/v1/builds":
-		handler.handleListBuilds(response, request)
-	case strings.HasPrefix(request.URL.Path, "/v1/build/"):
-		handler.handleBuild(response, request)
+	case strings.TrimSuffix(url, "/") == "/v1/builds":
+		handler.serveRequestListBuilds(response, request)
+
+	case strings.HasPrefix(url, "/v1/build/"):
+		handler.serveRequestBuild(response, request)
+
+	case strings.HasPrefix(url, "/v1/key/"):
+		handler.serveRequestKey(response, request)
+
 	default:
 		http.NotFound(response, request)
 	}
 }
-
-func (handler *BuildHandler) handleBuild(
+func (handler *HTTPHandler) serveRequestBuild(
 	response http.ResponseWriter, request *http.Request,
 ) {
 	repoURL := strings.TrimPrefix(request.URL.Path, "/v1/build/")
+
 	if repoURL == "" {
 		response.WriteHeader(http.StatusBadRequest)
 		io.WriteString(
@@ -264,7 +273,7 @@ func (handler *BuildHandler) handleBuild(
 	}
 }
 
-func (handler BuildHandler) handleListBuilds(
+func (handler *HTTPHandler) serveRequestListBuilds(
 	response http.ResponseWriter, request *http.Request,
 ) {
 	writer := tabwriter.NewWriter(response, 20, 8, 4, ' ', 0)
@@ -286,6 +295,20 @@ func (handler BuildHandler) handleListBuilds(
 		)
 
 	})
+}
+
+func (handler *HTTPHandler) serveRequestKey(
+	response http.ResponseWriter, request *http.Request,
+) {
+	keyPath := filepath.Join(os.Getenv("HOME"), ".ssh", "id_rsa.pub")
+
+	keyData, err := ioutil.ReadFile(keyPath)
+	if err != nil {
+		http.Error(response, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	response.Write(keyData)
 }
 
 func runBuild(
@@ -320,7 +343,7 @@ func runBuild(
 	return nil
 }
 
-func (handler *BuildHandler) saveNewBuild(buildInfo *BuildInfo) {
+func (handler *HTTPHandler) saveNewBuild(buildInfo *BuildInfo) {
 	handler.buildListMutex.Lock()
 	defer handler.buildListMutex.Unlock()
 
