@@ -267,6 +267,8 @@ func (handler *HTTPHandler) serveRequestBuild(
 		fmt.Fprintf(topLevelLogger, "error during build: %s", err)
 		buildInfo.status = "error"
 		buildInfo.error = err.Error()
+
+		response.WriteHeader(http.StatusBadRequest)
 	} else {
 		fmt.Fprintf(topLevelLogger, "build completed")
 		buildInfo.status = "success"
