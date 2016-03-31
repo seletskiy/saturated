@@ -19,6 +19,7 @@ md5sums=('SKIP'
          '2c20ab85afad8668481e61a924193617')
 
 backup=(
+    'usr/lib/systemd/system/saturated.service'
 )
 
 pkgver() {
