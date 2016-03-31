@@ -56,10 +56,7 @@ func (info BuildInfo) Duration() time.Duration {
 	}
 }
 
-const usage = `saturated - dead simple makepkg build server.
-
-Tool will serve REST API on specified address:
-
+const apiSummary = `
     * /v1/build/<repo-url>
 
       - GET: clone specified repo, build package and run install command;
@@ -67,7 +64,13 @@ Tool will serve REST API on specified address:
 
     * /v1/key/
 
-      - GET: get current user RSA public key.
+      - GET: get current user RSA public key.`
+
+const usage = `saturated - dead simple makepkg build server.
+
+Tool will serve REST API on specified address:
+
+` + apiSummary + `
 
 Usage:
     saturated [options] <address>
@@ -93,7 +96,7 @@ Options:
 `
 
 func main() {
-	args, err := docopt.Parse(usage, nil, true, "3.0", false)
+	args, err := docopt.Parse(usage, nil, true, "3.1", false)
 	if err != nil {
 		panic(err)
 	}
@@ -175,8 +178,11 @@ func (handler *HTTPHandler) ServeHTTP(
 	case strings.HasPrefix(url, "/v1/build/"):
 		handler.serveRequestBuild(response, request)
 
-	case strings.HasPrefix(url, "/v1/key/"):
+	case strings.TrimSuffix(url, "/") == "/v1/key":
 		handler.serveRequestKey(response, request)
+
+	case url == "/":
+		handler.serveRoot(response, request)
 
 	default:
 		http.NotFound(response, request)
@@ -262,7 +268,9 @@ func (handler *HTTPHandler) serveRequestBuild(
 		logger,
 		environ,
 	)
+
 	buildInfo.finishedAt = time.Now()
+
 	if err != nil {
 		fmt.Fprintf(topLevelLogger, "error during build: %s", err)
 		buildInfo.status = "error"
@@ -311,6 +319,16 @@ func (handler *HTTPHandler) serveRequestKey(
 	}
 
 	response.Write(keyData)
+}
+
+func (handler *HTTPHandler) serveRoot(
+	response http.ResponseWriter, request *http.Request,
+) {
+	_, err := fmt.Fprintln(response, apiSummary)
+	if err != nil {
+		http.Error(response, err.Error(), http.StatusInternalServerError)
+		return
+	}
 }
 
 func runBuild(
