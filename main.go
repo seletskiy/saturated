@@ -132,6 +132,7 @@ func main() {
 		reposPath:      reposPath,
 		listenAddress:  listenAddress,
 		buildCommand:   buildCommand,
+		buildUid:       buildUid,
 		installCommand: installCommand,
 		branchName:     branchName,
 		queue:          NewBuildQueue(),
