@@ -123,11 +123,6 @@ func main() {
 
 	buildUid, _ := strconv.Atoi(buildUser.Uid)
 
-	err = checkSeteuid(buildUid)
-	if err != nil {
-		log.Fatal(err)
-	}
-
 	handler := &HTTPHandler{
 		reposPath:      reposPath,
 		listenAddress:  listenAddress,
@@ -146,25 +141,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("can't listen on '%s': %s", listenAddress, err)
 	}
-}
-
-// checkSeteuid calls syscall SYS_SETREUID with new uid and tries to restore
-// original euid
-func checkSeteuid(uid int) (err error) {
-	olduid := syscall.Getuid()
-
-	// be aware, err is named returning variable and changes by reference
-	err = rawSeteuid(uid)
-	if err != nil {
-		return fmt.Errorf("can't setuid to %d: %s", uid, err)
-	}
-
-	err = rawSeteuid(olduid)
-	if err != nil {
-		return fmt.Errorf("can't restore uid to %d: %s", olduid, err)
-	}
-
-	return nil
 }
 
 func (handler *HTTPHandler) ServeHTTP(
@@ -376,7 +352,9 @@ func (handler *HTTPHandler) saveNewBuild(buildInfo *BuildInfo) {
 }
 
 func rawSeteuid(uid int) error {
-	_, _, errno := syscall.RawSyscall(syscall.SYS_SETREUID, uintptr(uid), 0, 0)
+	_, _, errno := syscall.RawSyscall(
+		syscall.SYS_SETREUID, uintptr(uid), uintptr(uid), 0,
+	)
 	if errno != 0 {
 		return errno
 	}
