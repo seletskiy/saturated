@@ -250,6 +250,8 @@ func (handler *HTTPHandler) serveRequestBuild(
 
 	runtime.LockOSThread()
 
+	fmt.Fprintf(topLevelLogger, "changing uid to %d", handler.buildUid)
+
 	err = rawSeteuid(handler.buildUid)
 	if err != nil {
 		response.WriteHeader(http.StatusInternalServerError)
