@@ -62,6 +62,10 @@ const apiSummary = `
       - GET: clone specified repo, build package and run install command;
         output logs in realtime.
 
+    * /v1/builds
+
+      - GET: get list of last builds
+
     * /v1/key/
 
       - GET: get current user RSA public key.`
